@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monarch Image Sender</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>Monarch Image Sender</h1>
+      <p class="subtitle">Envía una imagen a la pantalla táctil de la Monarch por Wi-Fi.</p>
+    </header>
+
+    <section class="card">
+      <label for="ip">IP de la Monarch</label>
+      <div class="row">
+        <input id="ip" type="text" inputmode="decimal" placeholder="192.168.1.23" autocomplete="off" />
+        <button id="connectBtn" type="button">Conectar</button>
+      </div>
+      <p id="connectionStatus" class="status">Sin conectar.</p>
+    </section>
+
+    <section class="card">
+      <label for="fileInput">Imagen</label>
+      <div id="dropZone" class="drop-zone">
+        <p>Arrastra una imagen aquí, o</p>
+        <div class="row">
+          <label class="file-btn">
+            Elegir archivo
+            <input id="fileInput" type="file" accept="image/*" hidden />
+          </label>
+          <label class="file-btn">
+            Tomar foto
+            <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card preview-card" id="previewCard" hidden>
+      <label>Vista previa (aproximada a como se verá en braille)</label>
+      <div class="preview-row">
+        <div class="preview-col">
+          <span class="preview-label">Original</span>
+          <canvas id="originalCanvas"></canvas>
+        </div>
+        <div class="preview-col">
+          <span class="preview-label" id="ditherLabel">Braille</span>
+          <canvas id="ditherCanvas"></canvas>
+        </div>
+      </div>
+      <button id="sendBtn" type="button" disabled>Enviar a la Monarch</button>
+      <p id="sendStatus" class="status"></p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
