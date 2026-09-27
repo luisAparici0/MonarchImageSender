@@ -23,13 +23,20 @@
     </section>
 
     <section class="card">
+      <div class="tab-buttons" role="tablist">
+        <button type="button" class="tab-btn active" data-tab="image">Imagen</button>
+        <button type="button" class="tab-btn" data-tab="geogebra">Gráfico GeoGebra</button>
+      </div>
+    </section>
+
+    <section class="card" id="imageTab">
       <label for="fileInput">Imagen</label>
       <div id="dropZone" class="drop-zone">
-        <p>Arrastra una imagen aquí, o</p>
+        <p>Arrastra una imagen (o SVG) aquí, o</p>
         <div class="row">
           <label class="file-btn">
             Elegir archivo
-            <input id="fileInput" type="file" accept="image/*" hidden />
+            <input id="fileInput" type="file" accept="image/*,.svg,image/svg+xml" hidden />
           </label>
           <label class="file-btn">
             Tomar foto
@@ -39,7 +46,26 @@
       </div>
     </section>
 
+    <section class="card" id="geogebraTab" hidden>
+      <label>Gráfico GeoGebra</label>
+      <p class="hint">Mueve puntos, deslizadores o haz zoom hasta tener la vista que quieres, y luego captura el gráfico.</p>
+      <div id="ggbApplet" class="ggb-holder"></div>
+      <button id="captureBtn" type="button">Capturar gráfico</button>
+      <p id="captureStatus" class="status"></p>
+    </section>
+
     <section class="card preview-card" id="previewCard" hidden>
+      <label for="thicknessInput">Grosor de líneas</label>
+      <div class="row thickness-row">
+        <input id="thicknessInput" type="range" min="-3" max="4" step="1" value="0" />
+        <span id="thicknessValue" class="thickness-value">0</span>
+      </div>
+      <p class="hint">
+        Cada punto se decide en blanco o negro puro (sin grises intermedios). Sube el grosor
+        si las líneas se ven muy finas o cortadas; bájalo (valores negativos) si se ven
+        demasiado gruesas.
+      </p>
+
       <label>Vista previa (aproximada a como se verá en braille)</label>
       <div class="preview-row">
         <div class="preview-col">
@@ -56,6 +82,7 @@
     </section>
   </main>
 
+  <script src="https://www.geogebra.org/apps/deployggb.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

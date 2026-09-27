@@ -19,8 +19,9 @@ de [MonarchImageReceiver](../MonarchImageReceiver), que corre en el dispositivo.
    dale "Conectar" (llama a `GET /info` para saber el tamaño real de la pantalla braille).
 3. Elige una imagen (archivo o cámara). Se muestra una vista previa aproximada de cómo
    quedará en braille (mismo algoritmo de dithering que corre en el dispositivo).
-4. "Enviar a la Monarch" — hace `POST /image` con la imagen (reescalada a máx. 900px de
-   lado para no tardar en la subida; el dispositivo la reescala de nuevo a su tamaño real).
+4. "Enviar a la Monarch" — hace `POST /image?thickness=N` con la imagen original en PNG
+   (máx. 2400px de lado). El dispositivo corre el mismo algoritmo que la vista previa, así que
+   a zoom 1 se ve igual punto por punto, y al hacer zoom recalcula los puntos con todo el detalle.
 
 ## Notas
 

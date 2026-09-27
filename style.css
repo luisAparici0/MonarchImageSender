@@ -110,6 +110,58 @@ button:disabled {
 .status.ok { color: var(--ok); }
 .status.err { color: var(--err); }
 
+.tab-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.thickness-row {
+  align-items: center;
+}
+
+.thickness-row input[type="range"] {
+  flex: 1;
+  min-width: 160px;
+}
+
+.thickness-value {
+  min-width: 1.5em;
+  text-align: center;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.ggb-holder {
+  margin-bottom: 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
 .drop-zone {
   border: 2px dashed var(--border);
   border-radius: 10px;
