@@ -1,6 +1,5 @@
 const DEFAULT_DOTS = { width: 96, height: 40 }; // fallback until we know the real device
 
-const SEND_MAX_SIDE = 900;
 // The receiver redoes the dot conversion itself at every zoom level, so it needs the
 // original detail, not the 96x40 pattern.
 const SOURCE_SEND_MAX_SIDE = 2400;
@@ -10,8 +9,8 @@ const state = {
   dots: DEFAULT_DOTS,
   connected: false,
   rawBitmap: null, // pristine source image (file/camera or GeoGebra capture)
-  imageBitmap: null, // final black/white image (dot pattern blown up), used for preview and sending
-  dotPattern: null, // { width, height, dots }, the exact 0/1 pattern imageBitmap encodes
+  source: null, // { bitmap, canvas, width, height, lum }: rawBitmap as it gets sent (see buildSource)
+  dotPattern: null, // { width, height, dots }, the 0/1 pattern the Monarch will show at zoom 1
   thickness: 0, // line-thickening amount, in dots
 };
 
@@ -245,37 +244,45 @@ el.thicknessInput.addEventListener("input", () => {
 
 async function reprocessImage() {
   if (!state.rawBitmap) return;
-  state.imageBitmap = await buildProcessedBitmap(state.rawBitmap, state.thickness);
+  if (state.source?.bitmap !== state.rawBitmap) state.source = buildSource(state.rawBitmap);
+  state.dotPattern = buildDotPattern(state.source, state.thickness);
   el.previewCard.hidden = false;
   el.sendBtn.disabled = false;
   renderPreview();
 }
 
-async function buildProcessedBitmap(bitmap, thicknessDots) {
-  // Flatten onto white first: a transparent pixel has no defined RGB, and
-  // reading it as-is can look like solid black ink instead of "no ink".
-  // Matters for SVGs (usually transparent) and any PNG with alpha.
-  const nativeCanvas = document.createElement("canvas");
-  nativeCanvas.width = bitmap.width;
-  nativeCanvas.height = bitmap.height;
-  const nctx = nativeCanvas.getContext("2d");
-  nctx.fillStyle = "white";
-  nctx.fillRect(0, 0, bitmap.width, bitmap.height);
-  nctx.drawImage(bitmap, 0, 0);
-  const nativeData = nctx.getImageData(0, 0, bitmap.width, bitmap.height);
-  const nativeLum = toLuminance(nativeData);
+// The exact pixels that get sent (and that the Monarch processes): flattened
+// onto white -- a transparent pixel has no defined RGB and could read as ink --
+// and capped at SOURCE_SEND_MAX_SIDE. The preview is computed from these same
+// pixels so it can't drift from what the device shows.
+function buildSource(bitmap) {
+  const scale = Math.min(1, SOURCE_SEND_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, w, h);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  return { bitmap, canvas, width: w, height: h, lum: toLuminance(ctx.getImageData(0, 0, w, h)) };
+}
 
-  // Fit (letterbox) into the real dot grid, same idea as the Monarch's own
-  // fit-to-screen step.
+function buildDotPattern(source, thicknessDots) {
+  const { width: srcW, height: srcH, lum: nativeLum } = source;
+
+  // Fit (letterbox) into the real dot grid; the receiver does the same at zoom 1.
   const dotsW = (state.dots && state.dots.width) || DEFAULT_DOTS.width;
   const dotsH = (state.dots && state.dots.height) || DEFAULT_DOTS.height;
-  const fitScale = Math.min(dotsW / bitmap.width, dotsH / bitmap.height);
-  const scaledW = Math.max(1, Math.round(bitmap.width * fitScale));
-  const scaledH = Math.max(1, Math.round(bitmap.height * fitScale));
+  const fitScale = Math.min(dotsW / srcW, dotsH / srcH);
+  const scaledW = Math.max(1, Math.round(srcW * fitScale));
+  const scaledH = Math.max(1, Math.round(srcH * fitScale));
   const offsetX = Math.floor((dotsW - scaledW) / 2);
   const offsetY = Math.floor((dotsH - scaledH) / 2);
 
-  const scaledLum = minPoolLuminance(nativeLum, bitmap.width, bitmap.height, scaledW, scaledH);
+  const scaledLum = minPoolLuminance(nativeLum, srcW, srcH, scaledW, scaledH);
 
   let dotLum = new Float32Array(dotsW * dotsH).fill(255);
   for (let y = 0; y < scaledH; y++) {
@@ -293,33 +300,7 @@ async function buildProcessedBitmap(bitmap, thicknessDots) {
   const dots = new Uint8Array(dotsW * dotsH);
   for (let i = 0; i < dotLum.length; i++) dots[i] = dotLum[i] < THRESHOLD ? 1 : 0;
 
-  state.dotPattern = { width: dotsW, height: dotsH, dots };
-
-  // Blow the pattern back up into solid blocks for transport.
-  const blockSize = Math.max(1, Math.round(SEND_MAX_SIDE / Math.max(dotsW, dotsH)));
-  const outW = dotsW * blockSize;
-  const outH = dotsH * blockSize;
-  const canvas = document.createElement("canvas");
-  canvas.width = outW;
-  canvas.height = outH;
-  const ctx = canvas.getContext("2d");
-  const imgData = ctx.createImageData(outW, outH);
-  for (let y = 0; y < outH; y++) {
-    const dy = Math.floor(y / blockSize);
-    const rowOff = y * outW;
-    for (let x = 0; x < outW; x++) {
-      const dx = Math.floor(x / blockSize);
-      const v = dots[dy * dotsW + dx] ? 0 : 255;
-      const p = (rowOff + x) * 4;
-      imgData.data[p] = v;
-      imgData.data[p + 1] = v;
-      imgData.data[p + 2] = v;
-      imgData.data[p + 3] = 255;
-    }
-  }
-  ctx.putImageData(imgData, 0, 0);
-
-  return createImageBitmap(canvas);
+  return { width: dotsW, height: dotsH, dots };
 }
 
 function toLuminance(imageData) {
@@ -427,37 +408,48 @@ function maxFilterSeparable(lum, width, height, radius) {
 
 // --- Preview rendering -----------------------------------------------------
 
-function renderPreview() {
-  const bitmap = state.imageBitmap;
-  const pattern = state.dotPattern;
-  if (!bitmap || !pattern) return;
+const PREVIEW_ORIGINAL_MAX_SIDE = 640;
+const PREVIEW_PIN_PX = 8;
 
-  // Original, capped for display purposes. Smoothing stays off so the
-  // blown-up blocks read as crisp squares, not a blurred approximation.
-  const maxOriginal = 320;
-  const scaleOriginal = Math.min(maxOriginal / bitmap.width, maxOriginal / bitmap.height, 1);
-  const ow = Math.round(bitmap.width * scaleOriginal);
-  const oh = Math.round(bitmap.height * scaleOriginal);
+function renderPreview() {
+  const source = state.source;
+  const pattern = state.dotPattern;
+  if (!source || !pattern) return;
+
+  // Original: the real image (as it's sent, i.e. flattened onto white), smooth.
+  const scaleOriginal = Math.min(1, PREVIEW_ORIGINAL_MAX_SIDE / Math.max(source.width, source.height));
+  const ow = Math.max(1, Math.round(source.width * scaleOriginal));
+  const oh = Math.max(1, Math.round(source.height * scaleOriginal));
   el.originalCanvas.width = ow;
   el.originalCanvas.height = oh;
   const octx = el.originalCanvas.getContext("2d");
-  octx.imageSmoothingEnabled = false;
-  octx.drawImage(bitmap, 0, 0, ow, oh);
+  octx.imageSmoothingQuality = "high";
+  octx.drawImage(source.canvas, 0, 0, ow, oh);
 
-  // Braille preview: the exact dot pattern that was sent, no re-derivation.
+  // Braille: one circle per pin, like the Monarch's own on-screen view -- raised
+  // pins bright, lowered pins as faint marks so the 96x40 grid stays readable.
   const { width, height, dots } = pattern;
-  el.ditherCanvas.width = width;
-  el.ditherCanvas.height = height;
+  el.ditherCanvas.width = width * PREVIEW_PIN_PX;
+  el.ditherCanvas.height = height * PREVIEW_PIN_PX;
   const ctx = el.ditherCanvas.getContext("2d");
-  const imgData = ctx.createImageData(width, height);
-  for (let i = 0; i < dots.length; i++) {
-    const v = dots[i] ? 0 : 255; // raised (1) -> black dot, lowered (0) -> white
-    imgData.data[i * 4] = v;
-    imgData.data[i * 4 + 1] = v;
-    imgData.data[i * 4 + 2] = v;
-    imgData.data[i * 4 + 3] = 255;
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, el.ditherCanvas.width, el.ditherCanvas.height);
+  const half = PREVIEW_PIN_PX / 2;
+  for (const raised of [0, 1]) {
+    ctx.fillStyle = raised ? "#fff" : "#3a3a3a";
+    const r = raised ? PREVIEW_PIN_PX * 0.42 : PREVIEW_PIN_PX * 0.15;
+    ctx.beginPath();
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (dots[y * width + x] !== raised) continue;
+        const cx = x * PREVIEW_PIN_PX + half;
+        const cy = y * PREVIEW_PIN_PX + half;
+        ctx.moveTo(cx + r, cy);
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      }
+    }
+    ctx.fill();
   }
-  ctx.putImageData(imgData, 0, 0);
 }
 
 // --- GeoGebra tab ------------------------------------------------------------
@@ -533,7 +525,7 @@ async function captureGeoGebra() {
 el.sendBtn.addEventListener("click", sendImage);
 
 async function sendImage() {
-  if (!state.imageBitmap) return;
+  if (!state.source) return;
   if (!el.ip.value.trim()) {
     setStatus(el.sendStatus, "Escribe la IP de la Monarch primero.", "err");
     return;
@@ -543,7 +535,8 @@ async function sendImage() {
   setStatus(el.sendStatus, "Enviando...");
 
   try {
-    const blob = await sourceToPngBlob(state.rawBitmap, SOURCE_SEND_MAX_SIDE);
+    // PNG, not JPEG: lossless, so the device gets exactly the pixels the preview used.
+    const blob = await new Promise((resolve) => state.source.canvas.toBlob(resolve, "image/png"));
     const res = await fetch(`${baseUrl()}/image?thickness=${state.thickness}`, {
       method: "POST",
       headers: { "Content-Type": "image/png" },
@@ -560,20 +553,4 @@ async function sendImage() {
   } finally {
     el.sendBtn.disabled = false;
   }
-}
-
-// PNG, not JPEG: lossless, so thin lines and hard edges arrive intact.
-function sourceToPngBlob(bitmap, maxSide) {
-  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "white";
-  ctx.fillRect(0, 0, w, h);
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(bitmap, 0, 0, w, h);
-  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
 }

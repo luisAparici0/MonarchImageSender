@@ -205,7 +205,10 @@ canvas {
   background: #fff;
   border-radius: 8px;
   border: 1px solid var(--border);
-  image-rendering: pixelated;
+}
+
+#ditherCanvas {
+  background: #111;
 }
 
 #sendBtn {
