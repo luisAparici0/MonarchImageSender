@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Monarch Image Sender</title>
-  <link rel="stylesheet" href="style.css" />
+  <!-- Bump ?v= on every change: python's http.server lets the browser keep old copies. -->
+  <link rel="stylesheet" href="style.css?v=3" />
 </head>
 <body>
   <main class="wrap">
@@ -74,15 +75,20 @@
         </div>
         <div class="preview-col">
           <span class="preview-label" id="ditherLabel">Braille</span>
-          <canvas id="ditherCanvas"></canvas>
+          <canvas id="ditherCanvas" class="pins"></canvas>
+        </div>
+        <div class="preview-col" id="deviceCol" hidden>
+          <span class="preview-label" id="deviceLabel">Monarch</span>
+          <canvas id="deviceCanvas" class="pins"></canvas>
         </div>
       </div>
       <button id="sendBtn" type="button" disabled>Enviar a la Monarch</button>
+      <button id="screenBtn" type="button" class="secondary">Ver pantalla actual de la Monarch</button>
       <p id="sendStatus" class="status"></p>
     </section>
   </main>
 
   <script src="https://www.geogebra.org/apps/deployggb.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

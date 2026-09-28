@@ -207,10 +207,21 @@ canvas {
   border: 1px solid var(--border);
 }
 
-#ditherCanvas {
+canvas.pins {
   background: #111;
 }
 
-#sendBtn {
+#sendBtn,
+#screenBtn {
   width: 100%;
+}
+
+#screenBtn {
+  margin-top: 8px;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }

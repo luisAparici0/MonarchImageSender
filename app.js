@@ -11,6 +11,7 @@ const state = {
   rawBitmap: null, // pristine source image (file/camera or GeoGebra capture)
   source: null, // { bitmap, canvas, width, height, lum }: rawBitmap as it gets sent (see buildSource)
   dotPattern: null, // { width, height, dots }, the 0/1 pattern the Monarch will show at zoom 1
+  sentSource: null, // the source currently on the Monarch, so thickness changes can go live
   thickness: 0, // line-thickening amount, in dots
 };
 
@@ -34,6 +35,10 @@ const el = {
   captureStatus: document.getElementById("captureStatus"),
   thicknessInput: document.getElementById("thicknessInput"),
   thicknessValue: document.getElementById("thicknessValue"),
+  deviceCol: document.getElementById("deviceCol"),
+  deviceCanvas: document.getElementById("deviceCanvas"),
+  deviceLabel: document.getElementById("deviceLabel"),
+  screenBtn: document.getElementById("screenBtn"),
 };
 
 el.ip.value = state.ip;
@@ -231,6 +236,7 @@ function svgIntrinsicSize(svgText) {
 const THRESHOLD = 128;
 
 let thicknessRaf = null;
+let thicknessSendTimer = null;
 
 el.thicknessInput.addEventListener("input", () => {
   state.thickness = Number(el.thicknessInput.value);
@@ -240,11 +246,31 @@ el.thicknessInput.addEventListener("input", () => {
     thicknessRaf = null;
     reprocessImage();
   });
+  // If this image is already on the Monarch, apply the new thickness there too
+  // (only the number travels; the device re-renders the image it already has).
+  if (state.sentSource && state.sentSource === state.source) {
+    clearTimeout(thicknessSendTimer);
+    thicknessSendTimer = setTimeout(sendThickness, 250);
+  }
 });
+
+async function sendThickness() {
+  const thickness = state.thickness;
+  try {
+    const res = await fetch(`${baseUrl()}/thickness?value=${thickness}`, { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showDeviceResult(await res.json(), `Grosor ${thickness} aplicado en la Monarch.`);
+  } catch (err) {
+    setStatus(el.sendStatus, `No se pudo cambiar el grosor en la Monarch (${err.message}).`, "err");
+  }
+}
 
 async function reprocessImage() {
   if (!state.rawBitmap) return;
-  if (state.source?.bitmap !== state.rawBitmap) state.source = buildSource(state.rawBitmap);
+  if (state.source?.bitmap !== state.rawBitmap) {
+    state.source = buildSource(state.rawBitmap);
+    el.deviceCol.hidden = true;
+  }
   state.dotPattern = buildDotPattern(state.source, state.thickness);
   el.previewCard.hidden = false;
   el.sendBtn.disabled = false;
@@ -426,14 +452,18 @@ function renderPreview() {
   octx.imageSmoothingQuality = "high";
   octx.drawImage(source.canvas, 0, 0, ow, oh);
 
-  // Braille: one circle per pin, like the Monarch's own on-screen view -- raised
-  // pins bright, lowered pins as faint marks so the 96x40 grid stays readable.
+  drawPins(el.ditherCanvas, pattern);
+}
+
+// One circle per pin, like the Monarch's own on-screen view -- raised pins
+// bright, lowered pins as faint marks so the 96x40 grid stays readable.
+function drawPins(canvas, pattern) {
   const { width, height, dots } = pattern;
-  el.ditherCanvas.width = width * PREVIEW_PIN_PX;
-  el.ditherCanvas.height = height * PREVIEW_PIN_PX;
-  const ctx = el.ditherCanvas.getContext("2d");
+  canvas.width = width * PREVIEW_PIN_PX;
+  canvas.height = height * PREVIEW_PIN_PX;
+  const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#111";
-  ctx.fillRect(0, 0, el.ditherCanvas.width, el.ditherCanvas.height);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   const half = PREVIEW_PIN_PX / 2;
   for (const raised of [0, 1]) {
     ctx.fillStyle = raised ? "#fff" : "#3a3a3a";
@@ -451,6 +481,65 @@ function renderPreview() {
     ctx.fill();
   }
 }
+
+function parseDevicePattern(json) {
+  const dots = new Uint8Array(json.width * json.height);
+  for (let i = 0; i < dots.length; i++) dots[i] = json.dots.charCodeAt(i) === 49 ? 1 : 0; // "1"
+  return { width: json.width, height: json.height, dots };
+}
+
+function countDifferences(a, b) {
+  if (a.width !== b.width || a.height !== b.height) return -1;
+  let diff = 0;
+  for (let i = 0; i < a.dots.length; i++) if (a.dots[i] !== b.dots[i]) diff++;
+  return diff;
+}
+
+// Shows the zoom-1 pattern the Monarch computed next to our preview and says
+// whether they agree, so a mismatch can be pinned on processing vs. display.
+function showDeviceResult(json, prefix) {
+  const device = parseDevicePattern(json);
+  drawPins(el.deviceCanvas, device);
+  el.deviceLabel.textContent = `Monarch (lo que recibió, grosor ${json.thickness})`;
+  el.deviceCol.hidden = false;
+
+  const info = `Recibió ${json.receivedWidth}x${json.receivedHeight} px, pantalla ${json.width}x${json.height}.`;
+  const diff = state.dotPattern && json.thickness === state.thickness
+    ? countDifferences(state.dotPattern, device)
+    : null;
+  if (diff === 0) {
+    setStatus(el.sendStatus, `${prefix} ${info} Coincide punto por punto con la vista previa.`, "ok");
+  } else if (diff === null) {
+    setStatus(el.sendStatus, `${prefix} ${info}`, "ok");
+  } else {
+    setStatus(
+      el.sendStatus,
+      `${prefix} ${info} OJO: no coincide con la vista previa (${diff < 0 ? "tamaño distinto" : diff + " puntos distintos"}).`,
+      "err"
+    );
+  }
+}
+
+el.screenBtn.addEventListener("click", async () => {
+  try {
+    const res = await fetch(`${baseUrl()}/screen`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json.dots) throw new Error("la Monarch todavía no ha mostrado nada");
+    drawPins(el.deviceCanvas, parseDevicePattern(json));
+    const mode = json.mode === "image" ? `imagen, zoom ${json.zoom}x` : "pantalla de la IP";
+    el.deviceLabel.textContent = `Monarch (pantalla actual: ${mode})`;
+    el.deviceCol.hidden = false;
+    el.previewCard.hidden = false;
+    if (json.displayError) {
+      setStatus(el.sendStatus, `KeySoft rechazó los puntos: ${json.displayError}`, "err");
+    } else {
+      setStatus(el.sendStatus, "Esto es lo que la app le está mandando ahora a la pantalla braille.", "ok");
+    }
+  } catch (err) {
+    setStatus(el.sendStatus, `No se pudo leer la pantalla de la Monarch (${err.message}).`, "err");
+  }
+});
 
 // --- GeoGebra tab ------------------------------------------------------------
 
@@ -543,7 +632,16 @@ async function sendImage() {
       body: blob,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    setStatus(el.sendStatus, "Imagen enviada. Deberia verse en la pantalla braille.", "ok");
+    state.sentSource = state.source;
+    if ((res.headers.get("Content-Type") || "").includes("json")) {
+      showDeviceResult(await res.json(), "Imagen enviada.");
+    } else {
+      setStatus(
+        el.sendStatus,
+        "Imagen enviada, pero la Monarch tiene una versión vieja de MonarchImageReceiver: instala el APK nuevo.",
+        "err"
+      );
+    }
   } catch (err) {
     setStatus(
       el.sendStatus,
