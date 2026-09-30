@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Monarch Image Sender</title>
   <!-- Bump ?v= on every change: python's http.server lets the browser keep old copies. -->
-  <link rel="stylesheet" href="style.css?v=3" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
   <main class="wrap">
@@ -20,6 +20,9 @@
         <input id="ip" type="text" inputmode="decimal" placeholder="192.168.1.23" autocomplete="off" />
         <button id="connectBtn" type="button">Conectar</button>
       </div>
+      <button id="scanBtn" type="button" class="secondary">Buscar Monarch en la red</button>
+      <button id="testBtn" type="button" class="secondary">Probar pines (patrón de prueba)</button>
+      <p id="testStatus" class="status"></p>
       <p id="connectionStatus" class="status">Sin conectar.</p>
     </section>
 
@@ -88,7 +91,6 @@
     </section>
   </main>
 
-  <script src="https://www.geogebra.org/apps/deployggb.js"></script>
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

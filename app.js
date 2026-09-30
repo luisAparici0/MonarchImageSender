@@ -4,6 +4,9 @@ const DEFAULT_DOTS = { width: 96, height: 40 }; // fallback until we know the re
 // original detail, not the 96x40 pattern.
 const SOURCE_SEND_MAX_SIDE = 2400;
 
+const RECEIVER_PORT = 8080;
+const CONNECT_TIMEOUT_MS = 4000;
+
 const state = {
   ip: localStorage.getItem("monarchIp") || "",
   dots: DEFAULT_DOTS,
@@ -18,6 +21,9 @@ const state = {
 const el = {
   ip: document.getElementById("ip"),
   connectBtn: document.getElementById("connectBtn"),
+  scanBtn: document.getElementById("scanBtn"),
+  testBtn: document.getElementById("testBtn"),
+  testStatus: document.getElementById("testStatus"),
   connectionStatus: document.getElementById("connectionStatus"),
   dropZone: document.getElementById("dropZone"),
   fileInput: document.getElementById("fileInput"),
@@ -52,7 +58,21 @@ if (state.ip) {
 
 function baseUrl() {
   const ip = el.ip.value.trim();
-  return ip.includes(":") ? `http://${ip}` : `http://${ip}:8080`;
+  return ip.includes(":") ? `http://${ip}` : `http://${ip}:${RECEIVER_PORT}`;
+}
+
+// fetch() with no timeout can hang for a minute on an IP where nothing answers.
+async function fetchWithTimeout(url, options = {}, timeoutMs = CONNECT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error("no respondió a tiempo");
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function setStatus(node, text, kind) {
@@ -76,9 +96,10 @@ async function connect() {
   localStorage.setItem("monarchIp", ip);
   setStatus(el.connectionStatus, "Conectando...");
   try {
-    const res = await fetch(`${baseUrl()}/info`, { method: "GET" });
+    const res = await fetchWithTimeout(`${baseUrl()}/info`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const info = await res.json();
+    if (info.device !== "monarch-receiver") throw new Error("esa IP no es la Monarch");
     state.dots = { width: info.width, height: info.height };
     state.connected = true;
     setStatus(
@@ -92,9 +113,102 @@ async function connect() {
     state.connected = false;
     setStatus(
       el.connectionStatus,
-      `No se pudo conectar (${err.message}). Revisa que ambos dispositivos esten en la misma red Wi-Fi.`,
+      `No se pudo conectar a ${ip} (${err.message}). Revisa que MonarchImageReceiver esté abierta, ` +
+        'que ambos estén en la misma red Wi-Fi, o usa "Buscar Monarch en la red". ' +
+        "Las redes de universidad o de invitados suelen bloquear la conexión entre dispositivos; " +
+        "en ese caso usa un hotspot del celular o un router propio.",
       "err"
     );
+  }
+}
+
+// --- Network scan ----------------------------------------------------------
+//
+// Tries every address x.y.z.1-254 of the likely subnets (from the typed/saved IP and
+// from the address this page was opened on) and keeps the one whose /info says it's
+// the receiver. Nothing answering on port 8080 fails fast, so a subnet takes a few seconds.
+
+const SCAN_CONCURRENCY = 48;
+const SCAN_TIMEOUT_MS = 1500;
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+el.scanBtn.addEventListener("click", scanForMonarch);
+
+function candidateSubnets() {
+  const subnets = [];
+  const add = (ip) => {
+    const m = IPV4.exec((ip || "").trim().split(":")[0]);
+    if (m) {
+      const prefix = `${m[1]}.${m[2]}.${m[3]}`;
+      if (!subnets.includes(prefix)) subnets.push(prefix);
+    }
+  };
+  add(el.ip.value);
+  add(localStorage.getItem("monarchIp"));
+  add(location.hostname);
+  ["192.168.1", "192.168.0", "192.168.43", "172.20.10"].forEach(add); // routers comunes y hotspots
+  return subnets;
+}
+
+async function probe(ip, signal) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener("abort", abort);
+  const timer = setTimeout(abort, SCAN_TIMEOUT_MS);
+  try {
+    const res = await fetch(`http://${ip}:${RECEIVER_PORT}/info`, { signal: controller.signal });
+    const info = await res.json();
+    return info.device === "monarch-receiver";
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+  }
+}
+
+async function scanSubnet(prefix, onProgress) {
+  const stop = new AbortController();
+  let next = 1;
+  let found = null;
+  const worker = async () => {
+    while (!found && next <= 254) {
+      const ip = `${prefix}.${next++}`;
+      onProgress(ip);
+      if (await probe(ip, stop.signal)) {
+        found = found || ip;
+        stop.abort();
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: SCAN_CONCURRENCY }, worker));
+  return found;
+}
+
+async function scanForMonarch() {
+  el.scanBtn.disabled = true;
+  el.connectBtn.disabled = true;
+  try {
+    for (const prefix of candidateSubnets()) {
+      const found = await scanSubnet(prefix, (ip) =>
+        setStatus(el.connectionStatus, `Buscando la Monarch... (${ip})`)
+      );
+      if (found) {
+        el.ip.value = found;
+        await connect();
+        return;
+      }
+    }
+    setStatus(
+      el.connectionStatus,
+      "No encontré la Monarch. Revisa que MonarchImageReceiver esté abierta y en la misma red Wi-Fi " +
+        "(las redes de universidad o de invitados suelen bloquear la conexión entre dispositivos), " +
+        "o escribe la IP que muestra.",
+      "err"
+    );
+  } finally {
+    el.scanBtn.disabled = false;
+    el.connectBtn.disabled = false;
   }
 }
 
@@ -260,6 +374,7 @@ async function sendThickness() {
     const res = await fetch(`${baseUrl()}/thickness?value=${thickness}`, { method: "POST" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     showDeviceResult(await res.json(), `Grosor ${thickness} aplicado en la Monarch.`);
+    verifyOnDevice();
   } catch (err) {
     setStatus(el.sendStatus, `No se pudo cambiar el grosor en la Monarch (${err.message}).`, "err");
   }
@@ -520,6 +635,59 @@ function showDeviceResult(json, prefix) {
   }
 }
 
+// The /image and /thickness answers only prove the Receiver computed the right dots. This
+// checks the next step: that KeySoft accepted them and that they're what's on the pins now.
+async function verifyOnDevice() {
+  await new Promise((r) => setTimeout(r, 800));
+  let json;
+  try {
+    const res = await fetchWithTimeout(`${baseUrl()}/screen`);
+    json = await res.json();
+  } catch {
+    return;
+  }
+  if (json.keysoftConnected === undefined) return; // Receiver viejo
+  let problem = null;
+  if (!json.keysoftConnected) {
+    problem = "la app no está conectada al servicio braille de KeySoft";
+  } else if (json.displayError) {
+    problem = `KeySoft rechazó los puntos: ${json.displayError}`;
+  } else if (json.zoom === 1 && state.dotPattern && json.mode === "image" && !json.test) {
+    const diff = countDifferences(state.dotPattern, parseDevicePattern(json));
+    if (diff !== 0) problem = `lo que está en los pines no coincide con la vista previa (${diff} puntos)`;
+  }
+  const base = el.sendStatus.textContent;
+  if (problem) {
+    setStatus(el.sendStatus, `${base} PROBLEMA: ${problem}.`, "err");
+  } else if (!el.sendStatus.classList.contains("err")) {
+    setStatus(el.sendStatus, `${base} KeySoft aceptó los puntos (${json.delivered} envíos a los pines).`, "ok");
+  }
+}
+
+// Shows a pattern that's easy to recognize by touch. If the pins don't show it, the problem
+// is between the Receiver and KeySoft, not in the image processing.
+el.testBtn.addEventListener("click", async () => {
+  try {
+    const res = await fetchWithTimeout(`${baseUrl()}/test`, { method: "POST" });
+    if (res.status === 404) throw new Error("la Monarch tiene una versión vieja del Receiver");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    drawPins(el.deviceCanvas, parseDevicePattern(json));
+    el.deviceLabel.textContent = "Monarch (patrón de prueba)";
+    el.deviceCol.hidden = false;
+    el.previewCard.hidden = false;
+    setStatus(
+      el.testStatus,
+      "Toca los pines: deberías sentir un marco alrededor de toda la pantalla, una línea diagonal " +
+        "de arriba a la izquierda hasta abajo a la derecha, y un cuadro sólido arriba a la izquierda " +
+        "(como en la imagen \"Monarch\" de abajo). Atrás en la Monarch para salir.",
+      "ok"
+    );
+  } catch (err) {
+    setStatus(el.testStatus, `No se pudo mostrar el patrón (${err.message}).`, "err");
+  }
+});
+
 el.screenBtn.addEventListener("click", async () => {
   try {
     const res = await fetch(`${baseUrl()}/screen`);
@@ -527,7 +695,8 @@ el.screenBtn.addEventListener("click", async () => {
     const json = await res.json();
     if (!json.dots) throw new Error("la Monarch todavía no ha mostrado nada");
     drawPins(el.deviceCanvas, parseDevicePattern(json));
-    const mode = json.mode === "image" ? `imagen, zoom ${json.zoom}x` : "pantalla de la IP";
+    const mode = json.test ? "patrón de prueba"
+      : json.mode === "image" ? `imagen, zoom ${json.zoom}x` : "pantalla de la IP";
     el.deviceLabel.textContent = `Monarch (pantalla actual: ${mode})`;
     el.deviceCol.hidden = false;
     el.previewCard.hidden = false;
@@ -558,9 +727,29 @@ function switchTab(tab) {
   if (tab === "geogebra" && !ggbLoaded) loadGeoGebra();
 }
 
-function loadGeoGebra() {
+// Loaded on demand: as a blocking <script> it froze the whole page (Conectar included)
+// on a Wi-Fi without internet, like a phone hotspot or an isolated router.
+function loadGeoGebraScript() {
+  return new Promise((resolve, reject) => {
+    if (window.GGBApplet) return resolve();
+    const script = document.createElement("script");
+    script.src = "https://www.geogebra.org/apps/deployggb.js";
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("no se pudo descargar GeoGebra; ¿hay internet?"));
+    document.head.appendChild(script);
+  });
+}
+
+async function loadGeoGebra() {
   ggbLoaded = true;
   setStatus(el.captureStatus, "Cargando applet de GeoGebra...");
+  try {
+    await loadGeoGebraScript();
+  } catch (err) {
+    ggbLoaded = false;
+    setStatus(el.captureStatus, err.message, "err");
+    return;
+  }
   const ggbApp = new GGBApplet(
     {
       appName: "classic",
@@ -635,6 +824,7 @@ async function sendImage() {
     state.sentSource = state.source;
     if ((res.headers.get("Content-Type") || "").includes("json")) {
       showDeviceResult(await res.json(), "Imagen enviada.");
+      verifyOnDevice();
     } else {
       setStatus(
         el.sendStatus,
