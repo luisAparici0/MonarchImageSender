@@ -26,6 +26,8 @@ const el = {
   testStatus: document.getElementById("testStatus"),
   connectionStatus: document.getElementById("connectionStatus"),
   dropZone: document.getElementById("dropZone"),
+  fileBtn: document.getElementById("fileBtn"),
+  cameraBtn: document.getElementById("cameraBtn"),
   fileInput: document.getElementById("fileInput"),
   cameraInput: document.getElementById("cameraInput"),
   previewCard: document.getElementById("previewCard"),
@@ -214,8 +216,14 @@ async function scanForMonarch() {
 
 // --- File selection ------------------------------------------------------
 
-el.fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
-el.cameraInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+el.fileBtn.addEventListener("click", () => el.fileInput.click());
+el.cameraBtn.addEventListener("click", () => el.cameraInput.click());
+[el.fileInput, el.cameraInput].forEach((input) =>
+  input.addEventListener("change", () => {
+    handleFile(input.files[0]);
+    input.value = ""; // so picking the same file again still fires "change"
+  })
+);
 
 ["dragenter", "dragover"].forEach((evt) =>
   el.dropZone.addEventListener(evt, (e) => {
@@ -721,7 +729,11 @@ el.tabButtons.forEach((btn) => {
 });
 
 function switchTab(tab) {
-  el.tabButtons.forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  el.tabButtons.forEach((b) => {
+    const active = b.dataset.tab === tab;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-selected", String(active));
+  });
   el.imageTab.hidden = tab !== "image";
   el.geogebraTab.hidden = tab !== "geogebra";
   if (tab === "geogebra" && !ggbLoaded) loadGeoGebra();

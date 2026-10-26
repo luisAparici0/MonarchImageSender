@@ -80,7 +80,7 @@ input[type="text"] {
   font-size: 1rem;
 }
 
-button, .file-btn {
+button {
   padding: 10px 16px;
   border-radius: 8px;
   border: none;
@@ -97,9 +97,6 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.file-btn {
-  display: inline-block;
-}
 
 .status {
   margin: 10px 0 0;
