@@ -545,12 +545,18 @@ function cellContaining(ranges, lo, hi, p) {
   return Math.floor((lo + hi) / 2);
 }
 
+// "Ink" value per pixel: the darkest of its three channels, not its luminance. Luminance
+// treats saturated light colors as background (GeoGebra's green (0,204,0) and light blue
+// (0,153,255) sit right at the 128 threshold, so their anti-aliased lines vanished); with the
+// darkest channel any strong color counts as ink like black does, while grays are unchanged
+// and GeoGebra's translucent fills (10-35% opacity) still stay above the threshold.
+// Must match flattenedLuminance in the Receiver's SourceImage.kt.
 function toLuminance(imageData) {
   const { width, height, data } = imageData;
   const lum = new Float32Array(width * height);
   for (let i = 0; i < width * height; i++) {
     const p = i * 4;
-    lum[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+    lum[i] = Math.min(data[p], data[p + 1], data[p + 2]);
   }
   return lum;
 }
@@ -903,7 +909,9 @@ async function captureGeoGebra() {
   }
   setStatus(el.captureStatus, "Capturando...");
   try {
-    const base64 = ggbApi.getPNGBase64(1, false, 150);
+    // Scale 2: thin lines get more pixels at their full color instead of being mostly
+    // anti-aliased fringe blended with the white background.
+    const base64 = ggbApi.getPNGBase64(2, false, 150);
     const res = await fetch(`data:image/png;base64,${base64}`);
     const blob = await res.blob();
     const bitmap = await createImageBitmap(blob);
