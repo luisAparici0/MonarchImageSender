@@ -432,6 +432,8 @@ function buildDotPattern(source, thicknessDots) {
   const offsetY = Math.floor((dotsH - scaledH) / 2);
 
   const scaledLum = minPoolLuminance(nativeLum, srcW, srcH, scaledW, scaledH);
+  // Before the thickness filter, so every point grows (or vanishes) the same way.
+  collapsePoints(scaledLum, scaledW, scaledH, nativeLum, srcW, srcH);
 
   let dotLum = new Float32Array(dotsW * dotsH).fill(255);
   for (let y = 0; y < scaledH; y++) {
@@ -450,6 +452,97 @@ function buildDotPattern(source, thicknessDots) {
   for (let i = 0; i < dotLum.length; i++) dots[i] = dotLum[i] < THRESHOLD ? 1 : 0;
 
   return { width: dotsW, height: dotsH, dots };
+}
+
+// Marks whose dots span at most this many columns and rows count as points (see collapsePoints).
+const POINT_MAX_CELLS = 2;
+
+// A small mark comes out as 1, 2 or 4 dots depending on where it falls on the dot grid, so
+// identical points looked different on the pins. Every isolated mark that fits in
+// POINT_MAX_CELLS x POINT_MAX_CELLS dots becomes exactly one dot: the one holding the centroid
+// of its dark source pixels.
+//
+// Must stay identical to collapsePoints in MonarchImageReceiver's ImageViewport.kt, or the
+// preview and the pins stop matching at zoom 1.
+function collapsePoints(lum, w, h, srcLum, srcW, srcH) {
+  const cols = sourceRanges(w, srcW);
+  const rows = sourceRanges(h, srcH);
+  const seen = new Uint8Array(w * h);
+  const stack = new Int32Array(w * h);
+  const cells = new Int32Array(w * h);
+  for (let start = 0; start < w * h; start++) {
+    if (seen[start] || lum[start] >= THRESHOLD) continue;
+    // Flood fill the mark (8-connected dots).
+    let sp = 0;
+    let n = 0;
+    stack[sp++] = start;
+    seen[start] = 1;
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    while (sp > 0) {
+      const c = stack[--sp];
+      cells[n++] = c;
+      const cx = c % w;
+      const cy = Math.floor(c / w);
+      minX = Math.min(minX, cx); maxX = Math.max(maxX, cx);
+      minY = Math.min(minY, cy); maxY = Math.max(maxY, cy);
+      for (let ny = Math.max(0, cy - 1); ny <= Math.min(h - 1, cy + 1); ny++) {
+        for (let nx = Math.max(0, cx - 1); nx <= Math.min(w - 1, cx + 1); nx++) {
+          const k = ny * w + nx;
+          if (!seen[k] && lum[k] < THRESHOLD) {
+            seen[k] = 1;
+            stack[sp++] = k;
+          }
+        }
+      }
+    }
+    if (maxX - minX >= POINT_MAX_CELLS || maxY - minY >= POINT_MAX_CELLS) continue;
+
+    let sumX = 0, sumY = 0, count = 0, darkest = 255;
+    for (let q = 0; q < n; q++) {
+      const c = cells[q];
+      const i = c % w;
+      const j = Math.floor(c / w);
+      darkest = Math.min(darkest, lum[c]);
+      for (let y = rows[2 * j]; y < rows[2 * j + 1]; y++) {
+        const off = y * srcW;
+        for (let x = cols[2 * i]; x < cols[2 * i + 1]; x++) {
+          if (srcLum[off + x] < THRESHOLD) {
+            sumX += x;
+            sumY += y;
+            count++;
+          }
+        }
+      }
+    }
+    if (count === 0) continue;
+    const keepX = cellContaining(cols, minX, maxX, Math.floor(sumX / count));
+    const keepY = cellContaining(rows, minY, maxY, Math.floor(sumY / count));
+    for (let q = 0; q < n; q++) lum[cells[q]] = 255;
+    lum[keepY * w + keepX] = darkest;
+  }
+}
+
+// For each of `count` dots, the [start, end) source pixels min-pooled into it, as pairs
+// (same ranges as minPoolLuminance and the Receiver's sourceRanges).
+function sourceRanges(count, source) {
+  const out = new Int32Array(count * 2);
+  for (let c = 0; c < count; c++) {
+    let start = Math.ceil((c * source) / count);
+    let end = Math.ceil(((c + 1) * source) / count);
+    if (end <= start) {
+      start = Math.min(source - 1, Math.floor(((c + 0.5) * source) / count));
+      end = start + 1;
+    }
+    out[2 * c] = start;
+    out[2 * c + 1] = end;
+  }
+  return out;
+}
+
+// First dot in lo..hi whose source range holds pixel p; the middle one if none does.
+function cellContaining(ranges, lo, hi, p) {
+  for (let i = lo; i <= hi; i++) if (ranges[2 * i] <= p && p < ranges[2 * i + 1]) return i;
+  return Math.floor((lo + hi) / 2);
 }
 
 function toLuminance(imageData) {
