@@ -643,6 +643,21 @@ function showDeviceResult(json, prefix) {
   }
 }
 
+// True if the Monarch is showing exactly our preview at zoom 1, i.e. a send that looked like it
+// failed actually made it.
+async function imageArrivedAnyway() {
+  if (!state.dotPattern) return false;
+  await new Promise((r) => setTimeout(r, 500));
+  try {
+    const res = await fetchWithTimeout(`${baseUrl()}/screen`);
+    const json = await res.json();
+    return json.mode === "image" && json.zoom === 1 && !json.test &&
+      countDifferences(state.dotPattern, parseDevicePattern(json)) === 0;
+  } catch {
+    return false;
+  }
+}
+
 // The /image and /thickness answers only prove the Receiver computed the right dots. This
 // checks the next step: that KeySoft accepted them and that they're what's on the pins now.
 async function verifyOnDevice() {
@@ -845,11 +860,23 @@ async function sendImage() {
       );
     }
   } catch (err) {
-    setStatus(
-      el.sendStatus,
-      `Error enviando la imagen (${err.message}). Revisa la IP y la red Wi-Fi.`,
-      "err"
-    );
+    // Sometimes the image reaches the Monarch but the answer gets lost on the way back. Before
+    // reporting an error, ask the Monarch what it's showing: if it's this image, it got there.
+    if (await imageArrivedAnyway()) {
+      state.sentSource = state.source;
+      setStatus(
+        el.sendStatus,
+        `Imagen enviada. (La Monarch la recibió, pero su respuesta no llegó: ${err.message}.)`,
+        "ok"
+      );
+      verifyOnDevice();
+    } else {
+      setStatus(
+        el.sendStatus,
+        `Error enviando la imagen (${err.message}). Revisa la IP y la red Wi-Fi.`,
+        "err"
+      );
+    }
   } finally {
     el.sendBtn.disabled = false;
   }
