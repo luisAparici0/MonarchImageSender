@@ -35,5 +35,8 @@ muestra un patrón conocido para comprobarlo al tacto.
   Las redes de universidad o de invitados suelen aislar a los dispositivos entre sí; ahí
   la conexión falla aunque la IP sea correcta. Usa un hotspot del celular o un router propio.
 - GeoGebra se descarga solo al abrir su pestaña, así que la página funciona sin internet.
+- La actividad de GeoGebra se carga desde `assets/app-final.ggb.js` (el `.ggb` en base64), para
+  que funcione también abriendo `index.html` como archivo. Si cambias `assets/app-final.ggb`,
+  corre `sh assets/make-ggb-js.sh` para regenerarlo.
 - Todo el procesamiento final (el que realmente se muestra) ocurre en el dispositivo;
   la vista previa aquí es solo una aproximación para componer la imagen antes de enviarla.

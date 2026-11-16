@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Monarch Image Sender</title>
   <!-- Bump ?v= on every change: python's http.server lets the browser keep old copies. -->
-  <link rel="stylesheet" href="style.css?v=6" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
   <main class="wrap">
@@ -47,12 +47,26 @@
       </div>
     </section>
 
-    <section class="card" id="geogebraTab" role="tabpanel" hidden>
-      <label>Gráfico GeoGebra</label>
-      <p class="hint">Mueve puntos, deslizadores o haz zoom hasta tener la vista que quieres, y luego captura el gráfico.</p>
-      <div id="ggbApplet" class="ggb-holder"></div>
-      <button id="captureBtn" type="button">Capturar gráfico</button>
-      <p id="captureStatus" class="status" role="status" aria-live="polite"></p>
+    <!-- Full-screen: GeoGebra (data panel on the left, graph on the right) + preview/send panel. -->
+    <section class="ggb-screen" id="geogebraTab" role="tabpanel" aria-label="Gráfico GeoGebra" hidden>
+      <div class="ggb-bar">
+        <button id="ggbBackBtn" type="button" class="secondary">&larr; Volver</button>
+        <div class="ggb-bar-text">
+          <strong>Gráfico GeoGebra</strong>
+          <p id="captureStatus" class="status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="ggb-toggles" role="group" aria-label="Qué mostrar en la gráfica">
+          <label><input id="axesToggle" type="checkbox" checked /> Ejes</label>
+          <label><input id="gridToggle" type="checkbox" checked /> Cuadrícula</label>
+        </div>
+        <button id="captureBtn" type="button">Capturar gráfica</button>
+      </div>
+      <div class="ggb-body">
+        <div class="ggb-stage" id="ggbStage">
+          <div id="ggbApplet"></div>
+        </div>
+        <aside class="ggb-side" id="ggbSide" aria-label="Vista previa y envío"></aside>
+      </div>
     </section>
 
     <section class="card preview-card" id="previewCard" hidden>
@@ -88,6 +102,6 @@
     </section>
   </main>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>

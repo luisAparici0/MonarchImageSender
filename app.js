@@ -41,6 +41,10 @@ const el = {
   geogebraTab: document.getElementById("geogebraTab"),
   captureBtn: document.getElementById("captureBtn"),
   captureStatus: document.getElementById("captureStatus"),
+  ggbBackBtn: document.getElementById("ggbBackBtn"),
+  ggbSide: document.getElementById("ggbSide"),
+  axesToggle: document.getElementById("axesToggle"),
+  gridToggle: document.getElementById("gridToggle"),
   thicknessInput: document.getElementById("thicknessInput"),
   thicknessValue: document.getElementById("thicknessValue"),
   deviceCol: document.getElementById("deviceCol"),
@@ -834,7 +838,11 @@ el.screenBtn.addEventListener("click", async () => {
 
 // --- GeoGebra tab ------------------------------------------------------------
 
-const GGB_FILE = "assets/app-final.ggb";
+// assets/app-final.ggb as base64 (window.GGB_BASE64). Regenerate with assets/make-ggb-js.sh.
+const GGB_FILE_JS = "assets/app-final.ggb.js";
+// Design size of the file's window: data panel (740 wide) + graph, no toolbar.
+const GGB_WIDTH = 1550;
+const GGB_HEIGHT = 660;
 let ggbApi = null;
 let ggbLoaded = false;
 
@@ -842,26 +850,46 @@ el.tabButtons.forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
 
+// The GeoGebra tab takes over the whole screen. The preview/send card moves into its side
+// panel while it's open (so you can capture, adjust thickness and send without leaving the
+// graph) and goes back to its place in the page when you close it.
 function switchTab(tab) {
   el.tabButtons.forEach((b) => {
     const active = b.dataset.tab === tab;
     b.classList.toggle("active", active);
     b.setAttribute("aria-selected", String(active));
   });
-  el.imageTab.hidden = tab !== "image";
-  el.geogebraTab.hidden = tab !== "geogebra";
-  if (tab === "geogebra" && !ggbLoaded) loadGeoGebra();
+  const ggb = tab === "geogebra";
+  el.imageTab.hidden = ggb;
+  el.geogebraTab.hidden = !ggb;
+  document.body.classList.toggle("ggb-open", ggb);
+  if (ggb) {
+    el.ggbSide.appendChild(el.previewCard);
+    el.ggbBackBtn.focus();
+    if (!ggbLoaded) loadGeoGebra();
+  } else {
+    el.geogebraTab.after(el.previewCard);
+  }
+  refitGeoGebra();
 }
+
+el.ggbBackBtn.addEventListener("click", () => switchTab("image"));
+
+// GeoGebra rescales itself to .ggb-stage on window resize; the stage also changes size when
+// the side panel appears or the screen opens, so nudge it then too.
+function refitGeoGebra() {
+  requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+}
+if (window.ResizeObserver) new ResizeObserver(refitGeoGebra).observe(document.getElementById("ggbStage"));
 
 // Loaded on demand: as a blocking <script> it froze the whole page (Conectar included)
 // on a Wi-Fi without internet, like a phone hotspot or an isolated router.
-function loadGeoGebraScript() {
+function loadScript(src, errorMessage) {
   return new Promise((resolve, reject) => {
-    if (window.GGBApplet) return resolve();
     const script = document.createElement("script");
-    script.src = "https://www.geogebra.org/apps/deployggb.js";
+    script.src = src;
     script.onload = resolve;
-    script.onerror = () => reject(new Error("no se pudo descargar GeoGebra; ¿hay internet?"));
+    script.onerror = () => reject(new Error(errorMessage));
     document.head.appendChild(script);
   });
 }
@@ -870,7 +898,12 @@ async function loadGeoGebra() {
   ggbLoaded = true;
   setStatus(el.captureStatus, "Cargando applet de GeoGebra...");
   try {
-    await loadGeoGebraScript();
+    // The .ggb comes as a script (base64) rather than fetched by GeoGebra: a fetch is blocked
+    // when index.html is opened as a file (file://), which left the applet blank.
+    if (!window.GGB_BASE64) await loadScript(GGB_FILE_JS, "no se encontró " + GGB_FILE_JS);
+    if (!window.GGBApplet) {
+      await loadScript("https://www.geogebra.org/apps/deployggb.js", "no se pudo descargar GeoGebra; ¿hay internet?");
+    }
   } catch (err) {
     ggbLoaded = false;
     setStatus(el.captureStatus, err.message, "err");
@@ -879,20 +912,34 @@ async function loadGeoGebra() {
   const ggbApp = new GGBApplet(
     {
       appName: "classic",
-      width: 560,
-      height: 420,
-      showToolBar: true,
+      // The file's own layout: Graphics 1 (data panel, 740x634 of fixed-position input
+      // boxes) on the left and Graphics 2 (the graph) on the right. Kept at its design size
+      // and scaled as a whole to fit .ggb-stage; sizing the applet to the stage instead
+      // would cut the data panel off, since its boxes don't move.
+      width: GGB_WIDTH,
+      height: GGB_HEIGHT,
+      scaleContainerClass: "ggb-stage",
+      allowUpscale: true,
+      showToolBar: false,
       showMenuBar: false,
       showAlgebraInput: false,
-      showResetIcon: true,
-      enableRightClick: true,
-      filename: GGB_FILE,
+      showResetIcon: false,
+      showZoomButtons: false, // they sat on the data panel, which no longer zooms
+      enableRightClick: false,
+      enableShiftDragZoom: true,
+      ggbBase64: window.GGB_BASE64,
       appletOnLoad: (api) => {
         ggbApi = api;
+        // Start downloading the scripting commands now so "Capturar gráfica" doesn't wait.
+        evalScriptingCommand("SetActiveView(1)").catch(() => {});
+        lockDataPanel(api);
+        applyGraphToggles();
         setStatus(
           el.captureStatus,
-          'Listo. Ajusta el gráfico (deslizadores, zoom, puntos) y presiona "Capturar gráfico".'
+          "Escribe los datos a la izquierda; la gráfica sale a la derecha. " +
+            'Cuando se vea como quieres, presiona "Capturar gráfica".'
         );
+        refitGeoGebra();
       },
     },
     true
@@ -902,6 +949,71 @@ async function loadGeoGebra() {
 
 el.captureBtn.addEventListener("click", captureGeoGebra);
 
+// The data panel (Graphics 1) is a picture with input boxes on it, all anchored to plane
+// coordinates. Two things made it move:
+//  - the bee picture (and the points/lines its corners hang from) could be dragged like any
+//    object, so those get fixed and made unselectable;
+//  - scrolling zoomed the whole view. GeoGebra has no per-view "don't zoom" switch, so whenever
+//    that view changes we put it back, once the (animated) zoom has settled.
+const DATA_PANEL_FIXED_TYPES = new Set(["image", "point", "line", "segment", "ray", "polygon", "text"]);
+
+function lockDataPanel(api) {
+  for (const name of api.getAllObjectNames()) {
+    if (api.getVisible(name, 1) && DATA_PANEL_FIXED_TYPES.has(api.getObjectType(name))) {
+      api.setFixed(name, true, false);
+    }
+  }
+
+  const home = JSON.parse(api.getViewProperties(1));
+  const xMax = home.xMin + home.width * home.invXscale;
+  const yMax = home.yMin + home.height * home.invYscale;
+  const near = (a, b) => Math.abs(a - b) < 1e-9 * Math.max(1, Math.abs(b));
+  let timer = null;
+  const restoreIfMoved = () => {
+    timer = null;
+    const now = JSON.parse(api.getViewProperties(1));
+    if (near(now.xMin, home.xMin) && near(now.yMin, home.yMin) && near(now.invXscale, home.invXscale)) return;
+    try {
+      // setCoordSystem acts on the active view, so make sure that's the data panel.
+      api.evalCommand("SetActiveView(1)");
+      api.setCoordSystem(home.xMin, xMax, home.yMin, yMax);
+    } catch {
+      // Scripting commands not downloaded yet: try again shortly.
+      timer = setTimeout(restoreIfMoved, 300);
+    }
+  };
+  api.registerClientListener((event) => {
+    const type = event && (event.type || event[0]);
+    if (type !== "viewChanged2D") return;
+    clearTimeout(timer);
+    timer = setTimeout(restoreIfMoved, 150);
+  });
+}
+
+// "Ejes" / "Cuadrícula": only the graph (Graphics 2), which is also what gets captured.
+el.axesToggle.addEventListener("change", applyGraphToggles);
+el.gridToggle.addEventListener("change", applyGraphToggles);
+
+function applyGraphToggles() {
+  if (!ggbApi) return;
+  ggbApi.setAxesVisible(2, el.axesToggle.checked, el.axesToggle.checked);
+  ggbApi.setGridVisible(2, el.gridToggle.checked);
+}
+
+// GeoGebra Web downloads its scripting commands (SetActiveView, etc.) lazily: the first call
+// throws "Scripting commands not loaded yet" and starts the download. Retry until they're in.
+async function evalScriptingCommand(cmd, tries = 25) {
+  for (let i = 0; ; i++) {
+    try {
+      ggbApi.evalCommand(cmd);
+      return;
+    } catch (err) {
+      if (i >= tries || !/not loaded/i.test(String(err && err.message))) throw err;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+}
+
 async function captureGeoGebra() {
   if (!ggbApi) {
     setStatus(el.captureStatus, "El applet todavía no está listo.", "err");
@@ -909,6 +1021,9 @@ async function captureGeoGebra() {
   }
   setStatus(el.captureStatus, "Capturando...");
   try {
+    // getPNGBase64 exports the *active* view, which is the data panel if that's where you
+    // last typed. The graph is Graphics 2.
+    await evalScriptingCommand("SetActiveView(2)");
     // Scale 2: thin lines get more pixels at their full color instead of being mostly
     // anti-aliased fringe blended with the white background.
     const base64 = ggbApi.getPNGBase64(2, false, 150);
@@ -919,8 +1034,9 @@ async function captureGeoGebra() {
     state.rawBitmap = bitmap;
     setStatus(el.sendStatus, "");
     await reprocessImage();
-    setStatus(el.captureStatus, "Gráfico capturado. Puedes enviarlo abajo.", "ok");
-    el.previewCard.scrollIntoView({ behavior: "smooth", block: "start" });
+    setStatus(el.captureStatus, "Gráfica capturada. Revisa la vista previa y envíala desde el panel.", "ok");
+    refitGeoGebra(); // the side panel may have just appeared
+    el.ggbSide.scrollTop = 0;
   } catch (err) {
     setStatus(el.captureStatus, `Error capturando el gráfico (${err.message}).`, "err");
   }
